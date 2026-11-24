@@ -1,6 +1,6 @@
 import React,{useEffect,useRef,useState} from 'react';import{createRoot}from'react-dom/client';import QRCode from 'qrcode';import {Link} from './connection';import {initial,validCommand,type State,type Track,type Command} from './model';import {search} from './providers';import './style.css';
 import {Artwork} from './artwork';
-import {Transport} from './transport';
+import {Transport,VolumeControl} from './transport';
 type Mode='home'|'input'|'output';
 import {invitation,newSessionId,readInvitation} from './invite';
 const fmt=(n:number)=>Number.isFinite(n)?Math.floor(n/60)+':'+String(Math.floor(n%60)).padStart(2,'0'):'0:00';
@@ -360,7 +360,7 @@ return <main className={'app mode-'+mode}>
       <label className="position">Posición<input disabled={!authorized||!current||!state.duration} type="range" min="0" max={state.duration||1} step=".1" style={rangeProgress(state.time,state.duration||1)} value={Math.min(state.time,state.duration||1)} onChange={e=>send({type:'seek',value:+e.target.value})}/></label>
       <div className="times"><span>{fmt(state.time)}</span><span>{fmt(state.duration)}</span></div>
       <Transport state={state} enabled={authorized&&!!current} send={send}/>
-      <label className="volume">Volumen<input disabled={!authorized||!current} type="range" min="0" max="1" step=".01" style={rangeProgress(state.volume,1)} value={state.volume} onChange={e=>send({type:'volume',value:+e.target.value})}/></label>
+      <VolumeControl volume={state.volume} enabled={authorized&&!!current} send={send}/>
     </>}
     {state.error&&<p role="alert">{state.error}</p>}
     {mode==='output'&&videoId&&<a className="youtube-link" href={'https://www.youtube.com/watch?v='+encodeURIComponent(videoId)} target="_blank" rel="noopener noreferrer">Abrir en YouTube</a>}

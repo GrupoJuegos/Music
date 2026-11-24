@@ -281,3 +281,87 @@ footer {margin-top:34px;color:#afa4b0}
   font-weight:650;
 }
 .youtube-link:hover {text-decoration:underline}
+
+.volume-control {
+  padding:10px 12px 6px;
+  border:1px solid #ffffff12;
+  border-radius:16px;
+  background:#ffffff08;
+  text-align:left;
+}
+.volume-heading,.volume-adjust {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
+.volume-heading {
+  color:#e6dce2;
+  font-size:13px;
+  font-weight:650;
+}
+.volume-heading span {
+  min-width:4ch;
+  color:#ff91aa;
+  font-variant-numeric:tabular-nums;
+  text-align:right;
+}
+.volume-adjust button {
+  display:grid;
+  flex:0 0 44px;
+  place-items:center;
+  width:44px;
+  height:44px;
+  padding:0;
+  border-radius:12px;
+  background:transparent;
+  color:#f2e9ef;
+}
+.volume-adjust button:hover:not(:disabled) {background:#ffffff12}
+.volume-adjust button:disabled {opacity:.45}
+.speaker-icon {
+  position:relative;
+  width:22px;
+  height:22px;
+}
+.speaker-icon::before,.speaker-icon::after {
+  content:"";
+  position:absolute;
+}
+.speaker-icon::before {
+  inset:4px 9px 4px 1px;
+  background:currentColor;
+  clip-path:polygon(0 33%,35% 33%,100% 0,100% 100%,35% 67%,0 67%);
+}
+.speaker-icon::after {
+  inset:5px 2px 5px 11px;
+  border-right:2px solid currentColor;
+  border-radius:50%;
+}
+.speaker-icon.muted::after {
+  inset:5px 4px 5px auto;
+  width:2px;
+  border:0;
+  border-radius:2px;
+  background:#ff91aa;
+  transform:rotate(42deg);
+}
+.player .volume-adjust input[type=range] {
+  height:44px;
+  margin:0;
+  touch-action:pan-y;
+}
+.player .volume-adjust input[type=range]::-webkit-slider-runnable-track {height:8px}
+.player .volume-adjust input[type=range]::-moz-range-track {height:8px}
+.player .volume-adjust input[type=range]::-webkit-slider-thumb {
+  width:20px;height:20px;margin-top:-6px;
+  box-shadow:0 2px 6px #0006;
+}
+.player .volume-adjust input[type=range]::-moz-range-thumb {
+  width:20px;height:20px;
+  box-shadow:0 2px 6px #0006;
+}
+.player .volume-adjust input[type=range]:focus-visible {
+  outline:2px solid #ff91aa;
+  outline-offset:2px;
+}
