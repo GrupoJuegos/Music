@@ -17,6 +17,7 @@ entre los dispositivos.
 
 - `npm run dev` usa almacenamiento temporal en memoria si no hay credenciales
   de Redis en el entorno del proceso.
-- En Vercel, configura `UPSTASH_REDIS_REST_URL` y `UPSTASH_REDIS_REST_TOKEN`
-  como variables del servidor. La función requiere Redis para que los datos
-  de la sesión estén disponibles entre invocaciones.
+- En Vercel, la integración de Redis proporciona `KV_REST_API_URL` y
+  `KV_REST_API_TOKEN`. Si conectas Upstash manualmente, también puedes usar
+  `UPSTASH_REDIS_REST_URL` y `UPSTASH_REDIS_REST_TOKEN`. La función requiere
+  Redis para compartir la sesión entre invocaciones.

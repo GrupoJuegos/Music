@@ -3,8 +3,10 @@ const sessionId = /^[a-f0-9]{32}$/;
 const local = new Map();
 
 async function cache(command, development) {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  const { KV_REST_API_URL, KV_REST_API_TOKEN, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN } = process.env;
+  const [url, token] = KV_REST_API_URL && KV_REST_API_TOKEN
+    ? [KV_REST_API_URL, KV_REST_API_TOKEN]
+    : [UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN];
   if (url && token) {
     const response = await fetch(url, {
       method: 'POST',
