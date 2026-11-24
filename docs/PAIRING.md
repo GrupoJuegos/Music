@@ -1,0 +1,2 @@
+# QR único de invitación
+SALIDA genera un enlace HTTPS con la oferta temporal WebRTC comprimida en el fragmento (#pair). La cámara normal abre la página y ENTRADA genera automáticamente su respuesta. El fragmento se borra del historial visible al procesarlo y no se envía en la solicitud HTTP. No hay backend ni señalización externa. Se requiere mostrar la respuesta a SALIDA (QR interno o texto) y autorizar el control. El tamaño de SDP puede afectar la lectura; se ofrece copia del enlace como alternativa. La compatibilidad con cámaras físicas queda pendiente de prueba.
