@@ -1,54 +1,157 @@
 import React,{useEffect,useRef,useState} from 'react';import{createRoot}from'react-dom/client';import QRCode from 'qrcode';import {Link} from './connection';import {initial,validCommand,type State,type Track,type Command} from './model';import {search} from './providers';import './style.css';
-import {Artwork,embeddedArtwork} from './artwork';
+import {Artwork} from './artwork';
+import {Transport} from './transport';
 type Mode='home'|'input'|'output';
 import {invitation,newSessionId,readInvitation} from './invite';
 const fmt=(n:number)=>Number.isFinite(n)?Math.floor(n/60)+':'+String(Math.floor(n%60)).padStart(2,'0'):'0:00';
-function App(){const[mode,setMode]=useState<Mode>(()=>readInvitation()?'input':'home'),[state,setState]=useState<State>(initial),[status,setStatus]=useState('Sin conexión'),[authorized,setAuthorized]=useState(false),[pair,setPair]=useState(()=>!!readInvitation()),[session,setSession]=useState(()=>readInvitation()||''),[incoming,setIncoming]=useState(''),[pairError,setPairError]=useState(''),[qr,setQr]=useState(''),[camera,setCamera]=useState(false),[q,setQ]=useState(''),[results,setResults]=useState<Track[]>([]),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false),[jamendo,setJamendo]=useState(''),[settings,setSettings]=useState(false),[source,setSource]=useState(0);const link=useRef<Link|null>(null),audio=useRef<HTMLAudioElement>(null),video=useRef<HTMLDivElement>(null),scanner=useRef<HTMLVideoElement>(null),latest=useRef(state),abort=useRef<AbortController|null>(null),urls=useRef<string[]>([]),yt=useRef<any>(null),current=state.queue[state.index],active=current?.sources[source];const sourceRef=useRef(source);sourceRef.current=source;latest.current=state;
+const rangeProgress=(value:number,max:number)=>({'--played':Math.max(0,Math.min(100,value/max*100))+'%'} as React.CSSProperties);
+function App(){const[mode,setMode]=useState<Mode>(()=>readInvitation()?'input':'home'),[state,setState]=useState<State>(initial),[status,setStatus]=useState('Sin conexión'),[authorized,setAuthorized]=useState(false),[pair,setPair]=useState(()=>!!readInvitation()),[session,setSession]=useState(()=>readInvitation()||''),[incoming,setIncoming]=useState(''),[pairError,setPairError]=useState(''),[qr,setQr]=useState(''),[camera,setCamera]=useState(false),[q,setQ]=useState(''),[results,setResults]=useState<Track[]>([]),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false);const link=useRef<Link|null>(null),video=useRef<HTMLDivElement>(null),scanner=useRef<HTMLVideoElement>(null),latest=useRef(state),abort=useRef<AbortController|null>(null),yt=useRef<any>(null),current=state.queue[state.index],active=current?.sources.find(item=>item.provider==='youtube');latest.current=state;
 const patch=(p:Partial<State>)=>setState(s=>({...s,...p}));
-const audioBlocked='Pulsa Habilitar audio en Salida para controlar la reproducción desde el teléfono.';
-function unlockAudio(){
-  const player=audio.current;
-  if(!player)return;
-  if(!player.getAttribute('src')){
-    player.src='data:audio/wav;base64,UklGRnQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YVAAAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==';
-    void player.play().catch(()=>{});
+const videoBlocked='Pulsa Reproducir en el video de YouTube en Salida para iniciar la reproducción.';
+function stop(){yt.current?.destroy?.();yt.current=null;}
+function reset(){
+  stop();link.current?.close();link.current=null;abort.current?.abort();abort.current=null;
+  setState(initial());setAuthorized(false);setPair(false);setCamera(false);setSession('');
+  setIncoming('');setPairError('');setResults([]);setQ('');setNotice('');setBusy(false);
+  history.replaceState(null,'',location.pathname);setMode('home');
+}
+function select(index:number){
+  const snapshot=latest.current;
+  const track=snapshot.queue[index];
+  if(!track){yt.current?.pauseVideo?.();patch({playing:false});return;}
+  if(track.id===snapshot.queue[snapshot.index]?.id){
+    yt.current?.seekTo?.(0,true);
+    yt.current?.playVideo?.();
+    patch({index,time:0,playing:true,error:''});
     return;
   }
-  command({type:'play'});
+  patch({index,time:0,duration:0,playing:true,error:''});
 }
-function stop(){const a=audio.current;if(a){a.pause();a.removeAttribute('src');a.load();}yt.current?.destroy?.();yt.current=null;}
-function reset(){stop();link.current?.close();link.current=null;abort.current?.abort();urls.current.forEach(URL.revokeObjectURL);urls.current=[];setState(initial());setAuthorized(false);setPair(false);setCamera(false);setSession('');setIncoming('');setPairError('');setResults([]);setQ('');setJamendo('');setNotice('');history.replaceState(null,'',location.pathname);setMode('home');}
-function select(i:number){const s=latest.current;if(i<0||i>=s.queue.length){stopAudio();patch({playing:false});return;}if(i===s.index){if(audio.current?.getAttribute('src')){audio.current.currentTime=0;void audio.current.play().catch(()=>patch({playing:false,error:audioBlocked}));}yt.current?.seekTo?.(0,true);yt.current?.playVideo?.();patch({time:0,playing:true,error:''});return;}setSource(0);patch({index:i,time:0,duration:0,error:'',playing:true});}
-function command(c:Command){const s=latest.current;if(c.type==='add'){if(s.queue.length>=100){setNotice('Cola llena');return;}const queue=[...s.queue,c.track];setState({...s,queue,index:s.index<0?0:s.index,playing:s.index<0||s.playing,error:''});if(s.index<0)setSource(0);}
-else if(c.type==='play'){if(s.index>=0){patch({playing:true,error:''});if(audio.current?.getAttribute('src'))audio.current.play().catch(()=>patch({playing:false,error:audioBlocked}));yt.current?.playVideo?.();}}
-else if(c.type==='pause'){stopAudio();patch({playing:false});}
-else if(c.type==='next')select(s.index+1);else if(c.type==='prev')select(Math.max(0,s.index-1));else if(c.type==='select')select(Math.floor(c.value));else if(c.type==='seek'){const v=Math.min(c.value,s.duration||0);if(audio.current?.getAttribute('src'))audio.current.currentTime=v;yt.current?.seekTo?.(v,true);patch({time:v});}
-else if(c.type==='volume'){const v=Math.min(1,c.value);if(audio.current)audio.current.volume=v;yt.current?.setVolume?.(v*100);patch({volume:v});}
-else if(c.type==='clear'){stop();setState(initial());setSource(0);}
-else if(c.type==='remove'){const i=Math.floor(c.value);if(i>=s.queue.length)return;const queue=s.queue.filter((_,j)=>i!==j);if(i===s.index){stop();setSource(0);patch({queue,index:Math.min(i,queue.length-1),playing:queue.length>0,time:0,duration:0});}else patch({queue,index:s.index-(i<s.index?1:0)});}}
-function stopAudio(){audio.current?.pause();yt.current?.pauseVideo?.();}
-function send(c:Command){if(mode==='output')command(c);else if(authorized)link.current?.send({kind:'command',command:c});else setNotice('Conecta primero con SALIDA.');}
-function failed(){const s=latest.current;if(source+1<(s.queue[s.index]?.sources.length??0)){setSource(i=>i+1);patch({error:'',playing:true});}else patch({playing:false,error:'La fuente no está disponible. Prueba otra canción.'});}
-useEffect(()=>{if(mode!=='output'||!active)return;const a=audio.current;let cancelled=false;const shouldPlay=latest.current.playing;stop();if(a){a.removeAttribute('src');a.load();}if(active.provider!=='youtube'){if(a){a.src=active.url;a.volume=latest.current.volume;if(shouldPlay)a.play().catch(()=>{if(!cancelled)patch({playing:false,error:audioBlocked});});}}else{const w=window as any;const setup=()=>{if(cancelled||!video.current)return;video.current.replaceChildren();const el=document.createElement('div');video.current.append(el);yt.current=new w.YT.Player(el,{videoId:active.id,width:'100%',height:'260',playerVars:{origin:location.origin,playsinline:1},events:{onReady:(e:any)=>{e.target.setVolume(latest.current.volume*100);if(latest.current.playing)e.target.playVideo();},onStateChange:(e:any)=>{if(e.data===0)command({type:'next'});else if(e.data===1)patch({playing:true,error:''});else if(e.data===2)patch({playing:false});},onAutoplayBlocked:()=>{if(!cancelled)patch({playing:false,error:audioBlocked});},onError:()=>{if(!cancelled)failed();}}})};if(w.YT?.Player)setup();else{const previous=w.onYouTubeIframeAPIReady;w.onYouTubeIframeAPIReady=()=>{previous?.();setup();};if(!document.querySelector('#yt-api')){const el=document.createElement('script');el.id='yt-api';el.src='https://www.youtube.com/iframe_api';el.onerror=()=>{if(!cancelled)failed()};document.head.append(el);}}}return()=>{cancelled=true;stop();};},[mode,current?.id,state.index,source]);
+function command(c:Command){
+  const snapshot=latest.current;
+  switch(c.type){
+    case 'add': {
+      if(!c.track.sources.some(source=>source.provider==='youtube'))return;
+      if(snapshot.queue.length>=100){setNotice('Cola llena');return;}
+      const first=snapshot.index<0;
+      patch({queue:[...snapshot.queue,c.track],index:first?0:snapshot.index,playing:first||snapshot.playing});
+      return;
+    }
+    case 'play':
+      if(snapshot.index>=0){patch({playing:true,error:''});yt.current?.playVideo?.();}
+      return;
+    case 'pause':
+      patch({playing:false});yt.current?.pauseVideo?.();
+      return;
+    case 'next': return select(snapshot.index+1);
+    case 'prev': return select(Math.max(0,snapshot.index-1));
+    case 'select': return select(Math.floor(c.value));
+    case 'seek': {
+      const time=Math.min(c.value,snapshot.duration||0);
+      yt.current?.seekTo?.(time,true);
+      patch({time});
+      return;
+    }
+    case 'volume': {
+      const volume=Math.min(1,c.value);
+      yt.current?.setVolume?.(volume*100);
+      if(volume>0)yt.current?.unMute?.();
+      patch({volume});
+      return;
+    }
+    case 'clear':
+      setState(initial());
+      return;
+    case 'remove': {
+      const index=Math.floor(c.value);
+      if(index>=snapshot.queue.length)return;
+      const queue=snapshot.queue.filter((_,i)=>i!==index);
+      if(index!==snapshot.index){
+        patch({queue,index:snapshot.index-(index<snapshot.index?1:0)});
+        return;
+      }
+      const next=Math.min(index,queue.length-1);
+      if(queue[next]?.id===snapshot.queue[snapshot.index]?.id){
+        yt.current?.seekTo?.(0,true);
+        yt.current?.playVideo?.();
+      }
+      patch({queue,index:next,time:0,duration:0,playing:next>=0,error:''});
+    }
+  }
+}
+function send(c:Command){
+  if(mode==='output')command(c);
+  else if(authorized)link.current?.send({kind:'command',command:c});
+  else setNotice('Conecta primero con Salida.');
+}
+const videoId=active?.id;
+useEffect(()=>{
+  if(mode!=='output'||!videoId)return;
+  let cancelled=false;
+  const w=window as any;
+  const unavailable=()=>{if(!cancelled)patch({playing:false,error:'YouTube no pudo reproducir este video. Prueba con otro.'});};
+  const setup=()=>{
+    if(cancelled||!video.current)return;
+    const mount=document.createElement('div');
+    video.current.replaceChildren(mount);
+    yt.current=new w.YT.Player(mount,{
+      videoId,
+      playerVars:{origin:location.origin,playsinline:1,controls:1,rel:0},
+      events:{
+        onReady:({target}:any)=>{
+          if(cancelled)return;
+          target.getIframe().title='Reproductor de YouTube';
+          target.setVolume(latest.current.volume*100);
+          if(latest.current.playing)target.playVideo();
+        },
+        onStateChange:({data}:any)=>{
+          if(cancelled)return;
+          if(data===0)command({type:'next'});
+          else if(data===1)patch({playing:true,error:''});
+          else if(data===2)patch({playing:false});
+        },
+        onAutoplayBlocked:()=>{if(!cancelled)patch({playing:false,error:videoBlocked});},
+        onError:unavailable,
+      },
+    });
+  };
+  if(w.YT?.Player)setup();
+  else {
+    w.onYouTubeIframeAPIReady=setup;
+    let script=document.querySelector<HTMLScriptElement>('#yt-api');
+    if(!script){
+      script=document.createElement('script');
+      script.id='yt-api';
+      script.src='https://www.youtube.com/iframe_api';
+      script.addEventListener('error',()=>script?.remove(),{once:true});
+      document.head.append(script);
+    }
+    script.addEventListener('error',unavailable,{once:true});
+    return()=>{
+      cancelled=true;
+      script?.removeEventListener('error',unavailable);
+      if(w.onYouTubeIframeAPIReady===setup)delete w.onYouTubeIframeAPIReady;
+      stop();
+    };
+  }
+  return()=>{cancelled=true;stop();};
+},[mode,videoId]);
 useEffect(()=>{
   if(mode!=='output')return;
   const timer=setInterval(()=>{
-    const time=yt.current?.getCurrentTime?.();
-    const duration=yt.current?.getDuration?.();
-    if(Number.isFinite(time)&&Number.isFinite(duration))patch({time,duration});
-    if(!link.current?.authorized)return;
-    const snapshot=latest.current;
-    const activeArt=snapshot.queue[snapshot.index]?.art;
-    let artBudget=48000-(activeArt?.startsWith('data:')?activeArt.length:0);
-    const queue=snapshot.queue.map((track,index)=>{
-      if(track.sources[0]?.provider!=='local')return track;
-      const size=track.art?.length??0;
-      const art=index===snapshot.index||size<=artBudget?track.art:undefined;
-      if(art&&index!==snapshot.index)artBudget-=size;
-      return {...track,art,sources:track.sources.map(source=>({...source,url:''}))};
-    });
-    link.current.send({kind:'state',source:sourceRef.current,state:{...snapshot,queue}});
-  },700);
+    const player=yt.current;
+    const time=player?.getCurrentTime?.(),duration=player?.getDuration?.();
+    const volume=player?.isMuted?.()?0:player?.getVolume?.()/100;
+    const snapshot={...latest.current};
+    if(Number.isFinite(time)&&Number.isFinite(duration)){
+      Object.assign(snapshot,{time,duration});
+      if(Number.isFinite(volume))snapshot.volume=volume;
+      if(time!==latest.current.time||duration!==latest.current.duration||snapshot.volume!==latest.current.volume){
+        patch({time,duration,volume:snapshot.volume});
+      }
+    }
+    if(link.current?.authorized)link.current.send({kind:'state',source:0,state:snapshot});
+  },500);
   return()=>clearInterval(timer);
 },[mode]);
 useEffect(()=>{if(mode!=='output'||!('mediaSession'in navigator))return;const m=navigator.mediaSession;if(current)m.metadata=new MediaMetadata({title:current.title,artist:current.artist});for(const [action,c]of [['play','play'],['pause','pause'],['nexttrack','next'],['previoustrack','prev']] as const){try{m.setActionHandler(action,()=>command({type:c}));}catch{}}return()=>{for(const a of ['play','pause','nexttrack','previoustrack'] as const)try{m.setActionHandler(a,null)}catch{};m.metadata=null;};},[mode,current?.id]);
@@ -63,7 +166,6 @@ useEffect(()=>{
 },[pairUrl]);
 
 function startPairing(nextMode: 'input'|'output', id = '') {
-  if(nextMode==='output'&&mode==='home')unlockAudio();
   setMode(nextMode);
   setPair(true);
   setIncoming('');
@@ -104,7 +206,6 @@ useEffect(()=>{
     if(mode==='output'&&connection.authorized&&m?.kind==='command'&&validCommand(m.command))command(m.command);
     if(mode==='input'&&connection.authorized&&m?.kind==='state'&&Array.isArray(m.state?.queue)&&m.state.queue.length<=100){
       setState(m.state);
-      setSource(Number.isInteger(m.source)&&m.source>=0&&m.source<5?m.source:0);
     }
   },status=>{
     if(link.current!==connection)return;
@@ -157,13 +258,45 @@ function connectFromText(event:React.FormEvent){
   setCamera(false);
   startPairing('input',id);
 }
-async function lookup(e:React.FormEvent){e.preventDefault();if(!q.trim())return;abort.current?.abort();const a=new AbortController();abort.current=a;setBusy(true);setResults([]);setNotice('');const timer=setTimeout(()=>a.abort(),18000);try{const r=await search(q.trim(),a.signal,{jamendo});if(abort.current===a){setResults(r.tracks);setNotice(r.warnings.join(' · ')||(!r.tracks.length?'No encontramos coincidencias.':''));}}catch{if(abort.current===a)setNotice('No se pudo buscar.');}finally{clearTimeout(timer);if(abort.current===a)setBusy(false);}}
-function local(files:FileList|null){if(!files)return;const tracks:Track[]=Array.from(files).filter(f=>f.type.startsWith('audio/')||/\.(mp3|wav|ogg|m4a|flac|aac)$/i.test(f.name)).map(f=>{const url=URL.createObjectURL(f);urls.current.push(url);const id=crypto.randomUUID();
-  void embeddedArtwork(f).then(art=>{
-    if(art)setState(previous=>({...previous,queue:previous.queue.map(track=>track.id===id?{...track,art}:track)}));
-  }).catch(()=>{});
-  return{id,title:f.name.replace(/\.[^.]+$/,''),artist:'Archivo local',sources:[{provider:'local' as const,id:crypto.randomUUID(),url}]}});setState(s=>({...s,queue:[...s.queue,...tracks].slice(0,100),index:s.index<0&&tracks.length?0:s.index,playing:s.playing||s.index<0&&tracks.length>0}));}
-return <main className={'app mode-'+mode}><audio ref={audio} onPlaying={()=>current&&patch({playing:true,error:''})} onPause={()=>current&&patch({playing:false})} onTimeUpdate={e=>current&&patch({time:e.currentTarget.currentTime})} onLoadedMetadata={e=>current&&patch({duration:Number.isFinite(e.currentTarget.duration)?e.currentTarget.duration:0})} onEnded={()=>current&&command({type:'next'})} onError={e=>{if(active&&active.provider!=='youtube'&&e.currentTarget.currentSrc===active.url)failed()}}/><header><button className="brand" onClick={reset}><span className="logo" aria-hidden="true">♫</span> MusicBridge</button><div className="headright">{mode!=='home'&&<button onClick={showDevices}><span className={authorized?'dot online':'dot'}/> {authorized?'Conectado':'Conectar'}</button>}<button onClick={()=>setSettings(!settings)} aria-label="Configuración">⚙</button></div></header>{settings&&<section className="panel"><h3>Proveedores opcionales</h3><p>Solo claves públicas restringidas por dominio; se conservan en memoria. Nunca introduzcas secretos privados.</p><label>Jamendo Client ID<input value={jamendo} onChange={e=>setJamendo(e.target.value)}/></label><button onClick={()=>setSettings(false)}>Cerrar</button></section>}{mode==='home'?<section className="welcome"><div className="eyebrow">UNA CONEXIÓN. TODA TU MÚSICA.</div><h1>La música,<br/>a tu manera<span>.</span></h1><p>Tu teléfono controla. Tu ordenador reproduce. Sin cuentas, sin historial.</p><div className="modes"><button onClick={()=>startPairing('input')}><span className="modeicon" aria-hidden="true">▯</span><h2>Entrada</h2><p>Controla la reproducción desde otro dispositivo.</p><b>Conectar →</b></button><button onClick={()=>startPairing('output')}><span className="modeicon mint" aria-hidden="true">▱</span><h2>Salida</h2><p>Escucha música y recibe controles remotos.</p><b>Reproducir →</b></button></div></section>:<><div className="eyebrow">{mode==='output'?'SALIDA · REPRODUCTOR':'ENTRADA · CONTROL REMOTO'}</div>{pair&&<section className="panel pairing">
+async function lookup(event:React.FormEvent){
+  event.preventDefault();
+  if(!q.trim())return;
+  abort.current?.abort();
+  const request=new AbortController();
+  abort.current=request;
+  setBusy(true);setResults([]);setNotice('');
+  const timer=setTimeout(()=>request.abort(),12000);
+  try{
+    const tracks=await search(q.trim(),request.signal);
+    if(abort.current!==request)return;
+    setResults(tracks);
+    if(!tracks.length)setNotice('No encontramos coincidencias en YouTube.');
+  }catch{
+    if(abort.current===request)setNotice('No se pudo buscar en YouTube.');
+  }finally{
+    clearTimeout(timer);
+    if(abort.current===request)setBusy(false);
+  }
+}
+return <main className={'app mode-'+mode}>
+  <header>
+    <button className="brand" onClick={reset}><span className="logo" aria-hidden="true"><span className="playback-icon icon-play"/></span> MusicBridge</button>
+    <div className="headright">{mode!=='home'&&<button onClick={showDevices}><span className={authorized?'dot online':'dot'}/> {authorized?'Conectado':'Conectar'}</button>}</div>
+  </header>
+{mode==='home'?<section className="welcome">
+  <h1>La música,<br/>a tu manera<span>.</span></h1>
+  <p>Reproduce videos de YouTube en una pantalla y contrólalos desde el teléfono.</p>
+  <div className="modes">
+    <button onClick={()=>startPairing('output')}>
+      <span className="modeicon" aria-hidden="true"><span className="device-screen"/></span>
+      <h2>Salida</h2><p>Abre el reproductor en esta pantalla.</p><b>Empezar a reproducir <span aria-hidden="true">→</span></b>
+    </button>
+    <button onClick={()=>startPairing('input')}>
+      <span className="modeicon" aria-hidden="true"><span className="device-phone"/></span>
+      <h2>Entrada</h2><p>Usa este dispositivo como control remoto.</p><b>Conectar a un reproductor <span aria-hidden="true">→</span></b>
+    </button>
+  </div>
+</section>:<>{pair&&<section className="panel pairing">
   <div className="sectionhead">
     <h2>{authorized?'Dispositivos conectados':mode==='output'?'Conecta tu teléfono':'Conectar con Salida'}</h2>
     <button onClick={showDevices}>{mode==='output'&&!authorized?'Ir al reproductor':'Cerrar'}</button>
@@ -187,5 +320,50 @@ return <main className={'app mode-'+mode}><audio ref={audio} onPlaying={()=>curr
     {pairError&&<p role="alert">{pairError}</p>}
     {mode==='input'&&session&&pairError&&<button onClick={()=>startPairing('input')}>Usar otro enlace</button>}
   </>}
-</section>}<div hidden={pair&&!authorized}><nav className="sectionnav" aria-label="Navegación"><a href="#now-playing">Reproducción</a><a href="#music-search">Buscar</a><a href="#queue">Cola</a><button onClick={showDevices}>Dispositivos</button></nav><div className="workspace"><section className="panel player" id="now-playing"><div className="sectionhead"><span className="eyebrow">SONANDO AHORA</span><span className="tag">{active?.provider??'Sin fuente'}</span></div><Artwork key={current?.id} large url={current?.art} playing={state.playing}/><h2>{current?.title??'Tu próxima canción'}</h2><p>{current?.artist??'Busca música o agrega un archivo'}</p>{mode==='output'&&<><div ref={video} className={active?.provider==='youtube'?'video':'hidden'}/></>}<input disabled={!current||!state.duration} aria-label="Posición" type="range" min="0" max={state.duration||1} value={Math.min(state.time,state.duration||1)} onChange={e=>send({type:'seek',value:+e.target.value})}/><div className="times"><span>{fmt(state.time)}</span><span>{fmt(state.duration)}</span></div><div className="transport"><button onClick={()=>send({type:'prev'})} aria-label="Anterior">⏮</button><button disabled={!current} className="play" onClick={()=>send({type:state.playing?'pause':'play'})} aria-label={state.playing?'Pausar':'Reproducir'}>{state.playing?'Ⅱ':'▶'}</button><button onClick={()=>send({type:'next'})} aria-label="Siguiente">⏭</button></div><label className="volume">Volumen<input aria-label="Volumen" type="range" min="0" max="1" step=".01" value={state.volume} onChange={e=>send({type:'volume',value:+e.target.value})}/></label>{state.error&&<p role="alert">{state.error}</p>}{mode==='output'&&state.error===audioBlocked&&<button className="primary" onClick={unlockAudio}>Habilitar audio</button>}</section><section className="library" id="music-search"><h2 className="librarytitle">Explorar música</h2><form className="search" onSubmit={lookup}><input aria-label="Buscar música" placeholder="Canción o artista..." value={q} onChange={e=>setQ(e.target.value)}/><button className="primary" disabled={busy}>{busy?'Buscando…':'Buscar'}</button></form>{mode==='output'&&<label className="file">＋ Agregar archivos locales<input type="file" multiple accept="audio/*,.flac,.m4a" onChange={e=>{local(e.target.files);e.target.value=''}}/></label>}{results.length>0&&<section className="panel"><h3>Mejor coincidencia</h3>{results.slice(0,1).map(t=><article className="track" key={t.id}><Artwork url={t.art}/><div><b>{t.title}</b><p>{t.artist} · {t.sources[0].provider}</p></div><button onClick={()=>send({type:'add',track:t})}>＋ Cola</button></article>)}{results.length>1&&<details><summary>Otras canciones</summary>{results.slice(1).map(t=><article className="track" key={t.id}><Artwork url={t.art}/><div><b>{t.title}</b><p>{t.artist} · {t.sources[0].provider}</p></div><button onClick={()=>send({type:'add',track:t})}>＋</button></article>)}</details>}</section>}<section className="panel queue" id="queue"><div className="sectionhead"><h3>Cola de reproducción · {state.queue.length}</h3><button onClick={()=>send({type:'clear'})}>Vaciar</button></div>{!state.queue.length&&<p>Tu cola está vacía.</p>}{state.queue.map((t,i)=><article className={'track '+(i===state.index?'selected':'')} key={t.id+':'+i}><button className="queueplay" onClick={()=>send({type:'select',value:i})} aria-label={'Reproducir '+t.title}>{i===state.index&&state.playing?'♫':'▶'}</button><Artwork url={t.art}/><div><b>{t.title}</b><p>{t.artist}</p></div><button onClick={()=>send({type:'remove',value:i})} aria-label="Eliminar">×</button></article>)}</section></section></div></div></>}{notice&&<p className="notice" role="status">{notice}</p>}<footer>MusicBridge <span>·</span> Sesiones temporales <span>·</span> Sin cuentas ni historial</footer></main>}
+</section>}<div hidden={pair&&!authorized}><nav className="sectionnav" aria-label="Navegación"><a href="#now-playing">Reproducción</a><a href="#music-search">Buscar</a><a href="#queue">Cola</a><button onClick={showDevices}>Dispositivos</button></nav><div className="workspace">
+  <section className="panel player" id="now-playing">
+    <div className="sectionhead"><span className="eyebrow">{mode==='output'?'REPRODUCTOR':'CONTROL REMOTO'}</span><span className="tag">YouTube</span></div>
+    {mode==='output'
+      ? <div className="video-stage">
+          <div className="video-frame" ref={video}/>
+          {!videoId&&<p>Elige un video de YouTube para reproducirlo aquí.</p>}
+        </div>
+      : <Artwork key={videoId} large url={current?.art} playing={state.playing}/>}
+    <div className="track-heading">
+      <h2>{current?.title??'Tu próxima canción'}</h2>
+      {current&&<p>{current.artist}</p>}
+    </div>
+    {mode==='input'&&<>
+      <label className="position">Posición<input disabled={!authorized||!current||!state.duration} type="range" min="0" max={state.duration||1} step=".1" style={rangeProgress(state.time,state.duration||1)} value={Math.min(state.time,state.duration||1)} onChange={e=>send({type:'seek',value:+e.target.value})}/></label>
+      <div className="times"><span>{fmt(state.time)}</span><span>{fmt(state.duration)}</span></div>
+      <Transport state={state} enabled={authorized&&!!current} send={send}/>
+      <label className="volume">Volumen<input disabled={!authorized||!current} type="range" min="0" max="1" step=".01" style={rangeProgress(state.volume,1)} value={state.volume} onChange={e=>send({type:'volume',value:+e.target.value})}/></label>
+    </>}
+    {state.error&&<p role="alert">{state.error}</p>}
+  </section>
+  <section className="library" id="music-search">
+    <h2 className="librarytitle">Buscar en YouTube</h2>
+    <form className="search" onSubmit={lookup}>
+      <input aria-label="Buscar música" placeholder="Canción o artista…" value={q} maxLength={200} onChange={e=>setQ(e.target.value)}/>
+      <button className="primary" disabled={busy}>{busy?'Buscando…':'Buscar'}</button>
+    </form>
+    {results.length>0&&<section className="panel results-panel" aria-label="Resultados de YouTube">
+      {results.map(track=><article className="track" key={track.id}>
+        <Artwork url={track.art}/>
+        <div><b>{track.title}</b><p>{track.artist}</p></div>
+        <button className="track-add" onClick={()=>send({type:'add',track})}>Añadir</button>
+      </article>)}
+    </section>}
+    <section className="panel queue" id="queue">
+      <div className="sectionhead"><h3>Cola <span className="queue-count">{state.queue.length}</span></h3><button disabled={!state.queue.length} onClick={()=>send({type:'clear'})}>Vaciar</button></div>
+      {!state.queue.length&&<p>Tu cola está vacía.</p>}
+      {state.queue.map((track,index)=><article className={'track '+(index===state.index?'selected':'')} key={track.id+':'+index}>
+        <Artwork url={track.art}/>
+        <div><b>{track.title}</b><p>{track.artist}</p></div>
+        <button onClick={()=>send({type:'select',value:index})} aria-label={'Reproducir '+track.title}><span className="playback-icon icon-play" aria-hidden="true"/></button>
+        <button onClick={()=>send({type:'remove',value:index})} aria-label={'Quitar '+track.title}><span className="playback-icon icon-remove" aria-hidden="true"/></button>
+      </article>)}
+    </section>
+  </section>
+</div></div></>}{notice&&<p className="notice" role="status">{notice}</p>}<footer>MusicBridge</footer></main>}
 createRoot(document.getElementById('root')!).render(<App/>);if('serviceWorker'in navigator&&import.meta.env.PROD)navigator.serviceWorker.register('/sw.js').catch(()=>{});
