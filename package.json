@@ -1,0 +1,26 @@
+{
+  "name": "musicbridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "qrcode": "^1.5.4",
+    "@zxing/browser": "^0.1.5",
+    "fflate": "^0.8.2"
+  },
+  "devDependencies": {
+    "vite": "^6.4.1",
+    "typescript": "^5.8.3",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/qrcode": "^1.5.5",
+    "vitest": "^3.2.4"
+  }
+}
