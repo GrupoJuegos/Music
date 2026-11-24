@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite';
+import { youtubeSearch } from './server/youtube.js';
 import { pairing } from './server/pairing.js';
 
 export default defineConfig({
@@ -6,8 +7,10 @@ export default defineConfig({
     name: 'musicbridge-pairing',
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
-        if (req.url?.split('?')[0] !== '/api/pair') return next();
-        void pairing(req, res, true);
+        const path = req.url?.split('?')[0];
+        if (path === '/api/youtube') return void youtubeSearch(req, res);
+        if (path === '/api/pair') return void pairing(req, res, true);
+        next();
       });
     },
   }],
