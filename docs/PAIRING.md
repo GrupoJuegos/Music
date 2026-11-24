@@ -1,2 +1,22 @@
-# QR único de invitación
-SALIDA genera un enlace HTTPS con la oferta temporal WebRTC comprimida en el fragmento (#pair). La cámara normal abre la página y ENTRADA genera automáticamente su respuesta. El fragmento se borra del historial visible al procesarlo y no se envía en la solicitud HTTP. No hay backend ni señalización externa. Se requiere mostrar la respuesta a SALIDA (QR interno o texto) y autorizar el control. El tamaño de SDP puede afectar la lectura; se ofrece copia del enlace como alternativa. La compatibilidad con cámaras físicas queda pendiente de prueba.
+# Conectar un teléfono
+
+En el equipo que reproduce, elige **Salida**. Escanea el QR con la cámara del
+teléfono y abre el enlace. Ambos dispositivos deben estar en la misma red
+Wi-Fi. Cuando se abre el canal WebRTC, el QR desaparece y ambos dispositivos
+muestran el reproductor. Se puede abrir el reproductor local con **Ir al
+reproductor** o terminar una conexión desde **Dispositivos**.
+
+El QR contiene un enlace corto con un identificador aleatorio. La API
+`/api/pair` intercambia la oferta y la respuesta WebRTC en Redis con caducidad
+de cinco minutos por registro. La primera respuesta queda asociada a la
+invitación. Comparte el enlace únicamente con el teléfono que va a controlar
+la reproducción. Los comandos y el estado del reproductor viajan directamente
+entre los dispositivos.
+
+## Entornos
+
+- `npm run dev` usa almacenamiento temporal en memoria si no hay credenciales
+  de Redis en el entorno del proceso.
+- En Vercel, configura `UPSTASH_REDIS_REST_URL` y `UPSTASH_REDIS_REST_TOKEN`
+  como variables del servidor. La función requiere Redis para que los datos
+  de la sesión estén disponibles entre invocaciones.

@@ -9,4 +9,7 @@ header,.sectionhead,.headright,.actions,.transport,.times{display:flex;align-ite
 @media(pointer:coarse){button,.sectionnav a{min-height:44px}input[type=range]{height:36px}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
 
-.pair-qr{margin:20px auto;text-align:center;max-width:520px}.pair-qr .qr{width:min(100%,460px);height:auto;image-rendering:pixelated;border-radius:0;background:white}.pair-qr figcaption{font-size:14px;color:var(--muted)}
+.pairing{max-width:480px;margin:24px auto;text-align:center}
+.pairing .sectionhead{flex-wrap:wrap;text-align:left}
+.pairing .qr{width:184px;margin:16px auto;background:white;border-radius:0;image-rendering:pixelated}
+.pairing p[role=status]{margin:14px 0 0}

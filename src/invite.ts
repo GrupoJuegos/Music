@@ -1,3 +1,18 @@
-// A URL fragment carries the temporary SDP offer without sending it to the host.
-export function invitation(code:string,origin:string){const url=new URL('/',origin);url.hash='pair='+encodeURIComponent(code);return url.href;}
-export function readInvitation(text:string=location.href):string|null{try{const url=new URL(text);const code=new URLSearchParams(url.hash.slice(1)).get('pair');return code?.startsWith('MB1:')&&code.length<=30000?code:null;}catch{return null;}}
+const sessionId = /^[a-f0-9]{32}$/;
+
+export function newSessionId() {
+  return crypto.randomUUID().replaceAll('-', '');
+}
+
+export function invitation(id: string, origin: string) {
+  return new URL('/#p=' + id, origin).href;
+}
+
+export function readInvitation(text: string = location.href): string | null {
+  try {
+    const id = new URLSearchParams(new URL(text).hash.slice(1)).get('p');
+    return id && sessionId.test(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
