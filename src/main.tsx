@@ -1,7 +1,6 @@
 import React,{useEffect,useRef,useState} from 'react';import{createRoot}from'react-dom/client';import QRCode from 'qrcode';import {Link} from './connection';import {initial,validCommand,type State,type Track,type Command} from './model';import {search} from './providers';import './style.css';
 type Mode='home'|'input'|'output';
 import {invitation,newSessionId,readInvitation} from './invite';
-import {publishPacket,waitForPacket} from './signaling';
 const fmt=(n:number)=>Number.isFinite(n)?Math.floor(n/60)+':'+String(Math.floor(n%60)).padStart(2,'0'):'0:00';
 function App(){const[mode,setMode]=useState<Mode>(()=>readInvitation()?'input':'home'),[state,setState]=useState<State>(initial),[status,setStatus]=useState('Sin conexión'),[authorized,setAuthorized]=useState(false),[pair,setPair]=useState(()=>!!readInvitation()),[session,setSession]=useState(()=>readInvitation()||''),[incoming,setIncoming]=useState(''),[pairError,setPairError]=useState(''),[qr,setQr]=useState(''),[camera,setCamera]=useState(false),[q,setQ]=useState(''),[results,setResults]=useState<Track[]>([]),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false),[youtube,setYoutube]=useState(''),[jamendo,setJamendo]=useState(''),[settings,setSettings]=useState(false),[source,setSource]=useState(0);const link=useRef<Link|null>(null),audio=useRef<HTMLAudioElement>(null),video=useRef<HTMLDivElement>(null),scanner=useRef<HTMLVideoElement>(null),latest=useRef(state),abort=useRef<AbortController|null>(null),urls=useRef<string[]>([]),yt=useRef<any>(null),current=state.queue[state.index],active=current?.sources[source];const sourceRef=useRef(source);sourceRef.current=source;latest.current=state;
 const patch=(p:Partial<State>)=>setState(s=>({...s,...p}));
@@ -67,10 +66,7 @@ useEffect(()=>{
 useEffect(()=>{
   if(!pair||!session||mode==='home')return;
   if(readInvitation()===session)history.replaceState(null,'',location.pathname+location.search);
-  const request=new AbortController();
-  const {signal}=request;
-  let connectionTimeout: number|undefined;
-  const connection=new Link(raw=>{
+  const connection=new Link(session,mode,raw=>{
     const m=raw as any;
     if(mode==='output'&&connection.authorized&&m?.kind==='command'&&validCommand(m.command))command(m.command);
     if(mode==='input'&&connection.authorized&&m?.kind==='state'&&Array.isArray(m.state?.queue)&&m.state.queue.length<=100){
@@ -85,39 +81,19 @@ useEffect(()=>{
       setPair(false);
     }else if(status==='Desconectado'){
       setAuthorized(false);
-      if(!signal.aborted){
-        request.abort();
-        setPairError('No se completó la conexión. Usa un nuevo QR y comprueba que ambos dispositivos estén en la misma red Wi-Fi.');
-      }
       if(mode==='input')setState(initial());
+    }
+  },message=>{
+    if(link.current===connection){
+      setSession('');
+      setPair(true);
+      setPairError(message);
     }
   });
   link.current=connection;
   setStatus(mode==='output'?'Esperando al teléfono…':'Conectando con Salida…');
-  void (async()=>{
-    try{
-      if(mode==='output'){
-        const owner=newSessionId();
-        const offer=await connection.offer();
-        await publishPacket(session,'offer',offer,signal,owner);
-        await connection.accept(await waitForPacket(session,'answer',signal,owner));
-      }else{
-        const offer=await waitForPacket(session,'offer',signal);
-        const answer=await connection.answer(offer);
-        await publishPacket(session,'answer',answer,signal);
-      }
-      if(!connection.authorized&&!signal.aborted){
-        connectionTimeout=window.setTimeout(()=>connection.close(),15_000);
-      }
-    }catch(error){
-      if(signal.aborted)return;
-      connection.close();
-      setPairError(error instanceof Error?error.message:'Error de conexión');
-    }
-  })();
+  connection.start();
   return()=>{
-    request.abort();
-    window.clearTimeout(connectionTimeout);
     if(!connection.authorized){
       if(link.current===connection)link.current=null;
       connection.close();
@@ -157,7 +133,7 @@ return <main className={'app mode-'+mode}><header><button className="brand" onCl
   </div>
   {authorized?<button onClick={()=>{link.current?.close();setPair(false);}}>Desconectar</button>:<>
     {mode==='output'&&<>
-      <p>Escanea el QR con la cámara del teléfono y abre el enlace. Usa la misma red Wi-Fi.</p>
+      <p>Escanea el QR con la cámara del teléfono y abre el enlace.</p>
       {qr&&<img className="qr" src={qr} alt="QR para conectar el teléfono a MusicBridge"/>}
       {pairUrl&&<button onClick={()=>navigator.clipboard.writeText(pairUrl).then(()=>setNotice('Enlace copiado.')).catch(()=>setPairError('Puedes abrir el enlace desde otro dispositivo: '+pairUrl))}>Copiar enlace</button>}
       {pairError&&<button onClick={()=>startPairing('output')}>Generar otro QR</button>}

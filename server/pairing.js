@@ -1,6 +1,11 @@
-const lifetime = 300;
 const sessionId = /^[a-f0-9]{32}$/;
 const local = new Map();
+const compareAndSet = `
+local current = redis.call('GET', KEYS[1]) or ''
+if current ~= ARGV[1] then return 0 end
+if ARGV[2] == '' then redis.call('DEL', KEYS[1])
+else redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3]) end
+return 1`;
 
 async function cache(command, development) {
   const { KV_REST_API_URL, KV_REST_API_TOKEN, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN } = process.env;
@@ -25,68 +30,92 @@ async function cache(command, development) {
   for (const [key, entry] of local) {
     if (entry.expires <= now) local.delete(key);
   }
-  const [method, key, value] = command;
-  if (method === 'GET') return local.get(key)?.value ?? null;
-  if (local.has(key)) return null;
-  local.set(key, { value, expires: now + lifetime * 1000 });
-  return 'OK';
+  if (command[0] === 'GET') return local.get(command[1])?.value ?? null;
+  const [, , , key, before, after, ttl] = command;
+  if ((local.get(key)?.value ?? '') !== before) return 0;
+  if (after) local.set(key, { value: after, expires: now + ttl * 1000 });
+  else local.delete(key);
+  return 1;
+}
+
+async function bodyOf(req) {
+  let body = req.body;
+  if (body === undefined) {
+    body = '';
+    for await (const chunk of req) {
+      body += chunk;
+      if (body.length > 200000) return null;
+    }
+  }
+  if (typeof body === 'string') {
+    if (body.length > 200000) return null;
+    try { body = JSON.parse(body); } catch { return null; }
+  }
+  return body;
 }
 
 export async function pairing(req, res, development = false) {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Content-Type', 'application/json');
-  const reply = (status, data) => {
+  const reply = (status, data = {}) => {
     res.statusCode = status;
     res.end(JSON.stringify(data));
   };
 
   try {
-    const url = new URL(req.url, 'http://localhost');
-    const id = url.searchParams.get('id') ?? '';
-    const role = url.searchParams.get('role');
-    const owner = req.headers.authorization?.slice(7) ?? '';
-    if (!sessionId.test(id) || !['offer', 'answer'].includes(role)) return reply(400, {});
-    if ((role === 'offer' && req.method === 'POST') ||
-        (role === 'answer' && req.method === 'GET')) {
-      if (!sessionId.test(owner)) return reply(403, {});
-    }
-    const offerKey = `musicbridge:${id}:offer`;
-    const answerKey = `musicbridge:${id}:answer`;
+    if (req.method !== 'POST') return reply(405);
+    const body = await bodyOf(req);
+    const { id, role, action, state, command, sequence, acknowledged } = body ?? {};
+    const token = req.headers.authorization?.slice(7) ?? '';
+    if (typeof id !== 'string' || !sessionId.test(id) || !sessionId.test(token) ||
+        !['output', 'input'].includes(role) || !['join', 'sync', 'close'].includes(action)) return reply(400);
+    if ((state && (role !== 'output' || JSON.stringify(state).length > 160000)) ||
+        (command && (role !== 'input' || !Number.isSafeInteger(sequence) ||
+          sequence < 1 || JSON.stringify(command).length > 12000))) return reply(400);
 
-    if (req.method === 'GET' && role === 'offer') {
-      const offer = await cache(['GET', offerKey], development);
-      return reply(200, { packet: offer ? JSON.parse(offer).packet : null });
-    }
-    if (req.method === 'GET' && role === 'answer') {
-      const offer = await cache(['GET', offerKey], development);
-      if (!offer || JSON.parse(offer).owner !== owner) return reply(403, {});
-      return reply(200, { packet: await cache(['GET', answerKey], development) });
-    }
-    if (req.method !== 'POST') return reply(405, {});
-
-    let body = req.body;
-    if (body === undefined) {
-      let raw = '';
-      for await (const chunk of req) {
-        raw += chunk;
-        if (raw.length > 32000) return reply(413, {});
+    const key = `musicbridge:control:${id}`;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const before = await cache(['GET', key], development) ?? '';
+      const now = Date.now();
+      if (!before && (role !== 'output' || action !== 'join')) {
+        return reply(action === 'join' ? 404 : 410);
       }
-      body = raw;
+      const room = before ? JSON.parse(before) : {
+        output: token, outputAt: now, input: null, inputAt: 0, created: now,
+        state: null, command: null, sequence: 0, acknowledged: 0,
+      };
+      if (role === 'output' && room.output !== token) return reply(403);
+      if (role === 'input') {
+        if (!room.input && action === 'join') room.input = token;
+        if (room.input !== token) return reply(409);
+      }
+      const expired = now - room.outputAt > 25000 ||
+        (room.inputAt ? now - room.inputAt > 25000 : now - room.created > 300000);
+      if (expired) return reply(410);
+
+      if (role === 'output') {
+        room.outputAt = now;
+        if (state) room.state = state;
+        if (acknowledged === room.sequence) {
+          room.command = null;
+          room.acknowledged = room.sequence;
+        }
+      } else {
+        room.inputAt = now;
+        if (command && !room.command && sequence === room.sequence + 1) {
+          room.command = command;
+          room.sequence = sequence;
+        }
+      }
+      const after = action === 'close' ? '' : JSON.stringify(room);
+      if (!await cache(['EVAL', compareAndSet, 1, key, before, after, 35], development)) continue;
+      if (action === 'close') return reply(200);
+      return reply(200, role === 'output'
+        ? { connected: !!room.input, command: room.command, sequence: room.sequence }
+        : { connected: true, state: room.state, acknowledged: room.acknowledged });
     }
-    if (typeof body === 'string') {
-      if (body.length > 32000) return reply(413, {});
-      try { body = JSON.parse(body); } catch { return reply(400, {}); }
-    }
-    const packet = body?.packet;
-    if (typeof packet !== 'string' || packet.length > 30000 || !/^MB1:[A-Za-z0-9+/]+=*$/.test(packet)) {
-      return reply(400, {});
-    }
-    if (role === 'answer' && !await cache(['GET', offerKey], development)) return reply(404, {});
-    const key = role === 'offer' ? offerKey : answerKey;
-    const value = role === 'offer' ? JSON.stringify({ owner, packet }) : packet;
-    const stored = await cache(['SET', key, value, 'EX', lifetime, 'NX'], development);
-    return reply(stored ? 201 : 409, {});
+    return reply(503);
   } catch {
-    return reply(503, {});
+    return reply(503);
   }
 }

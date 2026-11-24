@@ -1,13 +1,109 @@
-import {gzipSync,gunzipSync,strToU8,strFromU8} from 'fflate';
-type Packet={v:1;token:string;expires:number;description:RTCSessionDescriptionInit};
-export function encode(p:Packet){return 'MB1:'+btoa(String.fromCharCode(...gzipSync(strToU8(JSON.stringify(p)))));}
-export function decode(s:string):Packet{if(!s.startsWith('MB1:')||s.length>30000)throw Error('Código inválido');const p=JSON.parse(strFromU8(gunzipSync(Uint8Array.from(atob(s.slice(4)),c=>c.charCodeAt(0)))));if(p.v!==1||!/^[-\w]{36}$/.test(p.token)||!Number.isFinite(p.expires)||p.expires<Date.now()||p.expires>Date.now()+310000||!['offer','answer'].includes(p.description?.type)||typeof p.description?.sdp!=='string'||p.description.sdp.length>20000)throw Error('Código inválido o expirado');return p;}
-async function gather(pc:RTCPeerConnection){if(pc.iceGatheringState==='complete')return;await new Promise<void>(resolve=>{const done=()=>{if(pc.iceGatheringState==='complete'){clearTimeout(timer);pc.removeEventListener('icegatheringstatechange',done);resolve()}};const timer=setTimeout(()=>{pc.removeEventListener('icegatheringstatechange',done);resolve()},5000);pc.addEventListener('icegatheringstatechange',done);});}
-export class Link{pc=new RTCPeerConnection({iceServers:[]});channel?:RTCDataChannel;token:string=crypto.randomUUID();expires=Date.now()+300000;authorized=false;last=Date.now();timer=window.setInterval(()=>{if((!this.authorized&&Date.now()>this.expires)||Date.now()-this.last>1800000)this.close()},1000);
-constructor(private receive:(v:unknown)=>void,private status:(s:string)=>void){this.pc.ondatachannel=e=>this.attach(e.channel);this.pc.onconnectionstatechange=()=>{if(['failed','closed'].includes(this.pc.connectionState))this.close();else if(this.pc.connectionState==='disconnected')this.status('Conexión interrumpida');};}
-attach(c:RTCDataChannel){this.channel=c;c.onopen=()=>{this.authorized=true;this.status('Conectado');};c.onclose=()=>{this.authorized=false;this.status('Desconectado');};c.onmessage=e=>{if(typeof e.data!=='string'||e.data.length>200000)return;try{const m=JSON.parse(e.data);if(m.token!==this.token)return;this.last=Date.now();this.receive(m.payload)}catch{}};}
-async offer(){this.attach(this.pc.createDataChannel('musicbridge'));await this.pc.setLocalDescription(await this.pc.createOffer());await gather(this.pc);return encode({v:1,token:this.token,expires:this.expires,description:this.pc.localDescription!});}
-async answer(s:string){const p=decode(s);if(p.description.type!=='offer')throw Error('Se esperaba oferta');this.token=p.token;this.expires=p.expires;await this.pc.setRemoteDescription(p.description);await this.pc.setLocalDescription(await this.pc.createAnswer());await gather(this.pc);return encode({v:1,token:this.token,expires:this.expires,description:this.pc.localDescription!});}
-async accept(s:string){const p=decode(s);if(p.token!==this.token||p.description.type!=='answer')throw Error('Respuesta no corresponde a la sesión');await this.pc.setRemoteDescription(p.description);}
-send(payload:unknown){if(this.channel?.readyState==='open'){try{this.channel.send(JSON.stringify({token:this.token,payload}));}catch{}}}
-close(){clearInterval(this.timer);this.authorized=false;this.channel?.close();this.pc.close();this.status('Desconectado');}}
+import {newSessionId} from './invite';
+import type {Command, State} from './model';
+
+type RelayReply = {
+  connected: boolean;
+  command?: unknown;
+  sequence?: number;
+  state?: unknown;
+  acknowledged?: number;
+};
+
+export class Link {
+  authorized = false;
+  private token = newSessionId();
+  private controller = new AbortController();
+  private timer?: number;
+  private state: unknown;
+  private commands: unknown[] = [];
+  private sequence = 0;
+  private received = 0;
+
+  constructor(
+    private id: string,
+    private role: 'output'|'input',
+    private receive: (message: unknown) => void,
+    private status: (status: string) => void,
+    private error: (message: string) => void,
+  ) {}
+
+  start() {
+    void this.sync(true, Date.now());
+  }
+
+  send(payload: {kind: 'command'; command: Command} | {kind: 'state'; source: number; state: State}) {
+    if (payload.kind === 'state') this.state = payload;
+    if (payload.kind === 'command' && this.commands.length < 32) this.commands.push(payload.command);
+  }
+
+  private request(action: 'join'|'sync'|'close', signal?: AbortSignal) {
+    return fetch('/api/pair', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', Authorization: 'Bearer '+this.token},
+      body: JSON.stringify({
+        id: this.id, role: this.role, action,
+        ...(action === 'close' ? {} : this.role === 'output'
+          ? {state: this.state, acknowledged: this.received}
+          : {command: this.commands[0], sequence: this.sequence + 1}),
+      }),
+      signal,
+      keepalive: action === 'close',
+    });
+  }
+
+  private async sync(joining: boolean, lastSuccess: number) {
+    const signal = this.controller.signal;
+    try {
+      const response = await this.request(joining ? 'join' : 'sync', signal);
+      if (signal.aborted) return;
+      if (response.status === 409) throw Error('Este QR ya está conectado a otro teléfono.');
+      if (response.status === 410) throw Error('La sesión terminó. Abre un nuevo QR en Salida.');
+      if (!response.ok) {
+        if (Date.now() - lastSuccess < 12000 && [404, 503].includes(response.status)) {
+          this.schedule(joining, lastSuccess);
+          return;
+        }
+        throw Error('No se pudo conectar. Abre un nuevo QR en Salida.');
+      }
+      const data: RelayReply = await response.json();
+      if (signal.aborted) return;
+      if (data.connected && !this.authorized) {
+        this.authorized = true;
+        this.status('Conectado');
+      }
+      if (this.role === 'output' && data.command && data.sequence === this.received + 1) {
+        this.receive({kind: 'command', command: data.command});
+        this.received = data.sequence;
+      }
+      if (this.role === 'input') {
+        if (this.commands.length && data.acknowledged === this.sequence + 1) {
+          this.commands.shift();
+          this.sequence++;
+        }
+        if (data.state) this.receive(data.state);
+      }
+      this.schedule(false, Date.now());
+    } catch (error) {
+      if (signal.aborted) return;
+      if (error instanceof TypeError && Date.now() - lastSuccess < 12000) {
+        this.schedule(joining, lastSuccess);
+        return;
+      }
+      this.close();
+      this.error(error instanceof Error ? error.message : 'Error de conexión');
+    }
+  }
+
+  private schedule(joining: boolean, lastSuccess: number) {
+    this.timer = window.setTimeout(() => void this.sync(joining, lastSuccess), this.authorized ? 850 : 650);
+  }
+
+  close() {
+    if (this.controller.signal.aborted) return;
+    this.controller.abort();
+    window.clearTimeout(this.timer);
+    this.authorized = false;
+    this.status('Desconectado');
+    void this.request('close').catch(() => {});
+  }
+}
