@@ -6,9 +6,13 @@ import {invitation,newSessionId,readInvitation} from './invite';
 const fmt=(n:number)=>Number.isFinite(n)?Math.floor(n/60)+':'+String(Math.floor(n%60)).padStart(2,'0'):'0:00';
 const rangeProgress=(value:number,max:number)=>({'--played':Math.max(0,Math.min(100,value/max*100))+'%'} as React.CSSProperties);
 function App(){const[mode,setMode]=useState<Mode>(()=>readInvitation()?'input':'home'),[state,setState]=useState<State>(initial),[status,setStatus]=useState('Sin conexión'),[authorized,setAuthorized]=useState(false),[pair,setPair]=useState(()=>!!readInvitation()),[session,setSession]=useState(()=>readInvitation()||''),[incoming,setIncoming]=useState(''),[pairError,setPairError]=useState(''),[qr,setQr]=useState(''),[camera,setCamera]=useState(false),[q,setQ]=useState(''),[results,setResults]=useState<Track[]>([]),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false);const link=useRef<Link|null>(null),video=useRef<HTMLDivElement>(null),scanner=useRef<HTMLVideoElement>(null),latest=useRef(state),abort=useRef<AbortController|null>(null),yt=useRef<any>(null),current=state.queue[state.index],active=current?.sources.find(item=>item.provider==='youtube');latest.current=state;
+const playerReady=useRef(false),loadedVideo=useRef<string|null>(null);
 const patch=(p:Partial<State>)=>setState(s=>({...s,...p}));
 const videoBlocked='Pulsa Reproducir en el video de YouTube en Salida para iniciar la reproducción.';
-function stop(){yt.current?.destroy?.();yt.current=null;}
+function stop(){
+  playerReady.current=false;loadedVideo.current=null;
+  yt.current?.destroy?.();yt.current=null;
+}
 function reset(){
   stop();link.current?.close();link.current=null;abort.current?.abort();abort.current=null;
   setState(initial());setAuthorized(false);setPair(false);setCamera(false);setSession('');
@@ -85,24 +89,32 @@ function send(c:Command){
   else setNotice('Conecta primero con Salida.');
 }
 const videoId=active?.id;
+const hasVideo=!!videoId;
 useEffect(()=>{
-  if(mode!=='output'||!videoId)return;
+  if(mode!=='output'||!hasVideo)return;
   let cancelled=false;
   const w=window as any;
   const unavailable=()=>{if(!cancelled)patch({playing:false,error:'YouTube no pudo reproducir este video. Prueba con otro.'});};
   const setup=()=>{
-    if(cancelled||!video.current)return;
+    const snapshot=latest.current;
+    const initialVideo=snapshot.queue[snapshot.index]?.sources.find(item=>item.provider==='youtube')?.id;
+    if(cancelled||!video.current||!initialVideo)return;
     const mount=document.createElement('div');
     video.current.replaceChildren(mount);
+    loadedVideo.current=initialVideo;
     yt.current=new w.YT.Player(mount,{
-      videoId,
+      videoId:initialVideo,
       playerVars:{origin:location.origin,playsinline:1,controls:1,rel:0},
       events:{
         onReady:({target}:any)=>{
           if(cancelled)return;
+          playerReady.current=true;
           target.getIframe().title='Reproductor de YouTube';
           target.setVolume(latest.current.volume*100);
-          if(latest.current.playing)target.playVideo();
+          const {queue,index,playing}=latest.current;
+          const selection=queue[index]?.sources.find(item=>item.provider==='youtube')?.id;
+          if(selection&&selection!==loadedVideo.current)loadVideo(selection);
+          else if(playing)target.playVideo();
         },
         onStateChange:({data}:any)=>{
           if(cancelled)return;
@@ -115,27 +127,38 @@ useEffect(()=>{
       },
     });
   };
+  let script:HTMLScriptElement|null=null;
   if(w.YT?.Player)setup();
   else {
     w.onYouTubeIframeAPIReady=setup;
-    let script=document.querySelector<HTMLScriptElement>('#yt-api');
+    script=document.querySelector<HTMLScriptElement>('#yt-api');
     if(!script){
-      script=document.createElement('script');
-      script.id='yt-api';
-      script.src='https://www.youtube.com/iframe_api';
-      script.addEventListener('error',()=>script?.remove(),{once:true});
-      document.head.append(script);
+      const newScript=document.createElement('script');
+      newScript.id='yt-api';
+      newScript.src='https://www.youtube.com/iframe_api';
+      newScript.addEventListener('error',()=>newScript.remove(),{once:true});
+      document.head.append(newScript);
+      script=newScript;
     }
     script.addEventListener('error',unavailable,{once:true});
-    return()=>{
-      cancelled=true;
-      script?.removeEventListener('error',unavailable);
-      if(w.onYouTubeIframeAPIReady===setup)delete w.onYouTubeIframeAPIReady;
-      stop();
-    };
   }
-  return()=>{cancelled=true;stop();};
+  return()=>{
+    cancelled=true;
+    script?.removeEventListener('error',unavailable);
+    if(w.onYouTubeIframeAPIReady===setup)delete w.onYouTubeIframeAPIReady;
+    stop();
+  };
+},[mode,hasVideo]);
+
+useEffect(()=>{
+  if(mode==='output'&&videoId&&playerReady.current&&loadedVideo.current!==videoId)loadVideo(videoId);
 },[mode,videoId]);
+
+function loadVideo(id:string){
+  loadedVideo.current=id;
+  if(latest.current.playing)yt.current?.loadVideoById(id);
+  else yt.current?.cueVideoById(id);
+}
 useEffect(()=>{
   if(mode!=='output')return;
   const timer=setInterval(()=>{
@@ -320,7 +343,7 @@ return <main className={'app mode-'+mode}>
     {pairError&&<p role="alert">{pairError}</p>}
     {mode==='input'&&session&&pairError&&<button onClick={()=>startPairing('input')}>Usar otro enlace</button>}
   </>}
-</section>}<div hidden={pair&&!authorized}><nav className="sectionnav" aria-label="Navegación"><a href="#now-playing">Reproducción</a><a href="#music-search">Buscar</a><a href="#queue">Cola</a><button onClick={showDevices}>Dispositivos</button></nav><div className="workspace">
+</section>}<div hidden={pair&&!authorized&&!(mode==='output'&&hasVideo)}><nav className="sectionnav" aria-label="Navegación"><a href="#now-playing">Reproducción</a><a href="#music-search">Buscar</a><a href="#queue">Cola</a><button onClick={showDevices}>Dispositivos</button></nav><div className="workspace">
   <section className="panel player" id="now-playing">
     <div className="sectionhead"><span className="eyebrow">{mode==='output'?'REPRODUCTOR':'CONTROL REMOTO'}</span><span className="tag">YouTube</span></div>
     {mode==='output'
@@ -340,6 +363,7 @@ return <main className={'app mode-'+mode}>
       <label className="volume">Volumen<input disabled={!authorized||!current} type="range" min="0" max="1" step=".01" style={rangeProgress(state.volume,1)} value={state.volume} onChange={e=>send({type:'volume',value:+e.target.value})}/></label>
     </>}
     {state.error&&<p role="alert">{state.error}</p>}
+    {mode==='output'&&videoId&&<a className="youtube-link" href={'https://www.youtube.com/watch?v='+encodeURIComponent(videoId)} target="_blank" rel="noopener noreferrer">Abrir en YouTube</a>}
   </section>
   <section className="library" id="music-search">
     <h2 className="librarytitle">Buscar en YouTube</h2>

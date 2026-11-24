@@ -1,5 +1,7 @@
 const sessionId = /^[a-f0-9]{32}$/;
 const local = new Map();
+const invitationLifetime = 300000;
+const pairedIdleLimit = 30 * 60 * 1000;
 const compareAndSet = `
 local current = redis.call('GET', KEYS[1]) or ''
 if current ~= ARGV[1] then return 0 end
@@ -89,8 +91,9 @@ export async function pairing(req, res, development = false) {
         if (!room.input && action === 'join') room.input = token;
         if (room.input !== token) return reply(409);
       }
-      const expired = now - room.outputAt > 25000 ||
-        (room.inputAt ? now - room.inputAt > 25000 : now - room.created > 300000);
+      const idleLimit = room.inputAt ? pairedIdleLimit : 25000;
+      const expired = now - room.outputAt > idleLimit ||
+        (room.inputAt ? now - room.inputAt > idleLimit : now - room.created > invitationLifetime);
       if (expired) return reply(410);
 
       if (role === 'output') {
@@ -108,7 +111,8 @@ export async function pairing(req, res, development = false) {
         }
       }
       const after = action === 'close' ? '' : JSON.stringify(room);
-      if (!await cache(['EVAL', compareAndSet, 1, key, before, after, 35], development)) continue;
+      const ttl = room.inputAt ? Math.ceil(pairedIdleLimit / 1000) : 35;
+      if (!await cache(['EVAL', compareAndSet, 1, key, before, after, ttl], development)) continue;
       if (action === 'close') return reply(200);
       return reply(200, role === 'output'
         ? { connected: !!room.input, command: room.command, sequence: room.sequence }

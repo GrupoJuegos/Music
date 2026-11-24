@@ -8,7 +8,12 @@ o terminar la conexión desde **Dispositivos**.
 El QR contiene un identificador aleatorio. La API HTTPS `/api/pair`
 sincroniza los comandos y el estado del reproductor. El audio se reproduce
 en Salida. La invitación admite un solo teléfono y caduca a los cinco minutos.
-Redis conserva la sesión unos segundos después de dejar de recibir actividad.
+Una sesión conectada admite hasta 30 minutos de inactividad por dispositivo.
+Al volver a la página, el teléfono se resincroniza con Salida.
+
+Mantén visible el reproductor en Salida para iniciar videos. Los límites de
+reproducción en segundo plano del reproductor incrustado dependen de YouTube
+y del navegador.
 
 ## Entornos
 

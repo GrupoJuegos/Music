@@ -16,7 +16,7 @@ export class Link {
   private timer?: number;
   private state: unknown;
   private commands: Command[] = [];
-  private resume?: () => void;
+  private resume?: (waking?: boolean) => void;
   private sequence = 0;
   private received = 0;
 
@@ -29,6 +29,8 @@ export class Link {
   ) {}
 
   start() {
+    document.addEventListener('visibilitychange', this.wake);
+    window.addEventListener('online', this.wake);
     void this.sync(true, Date.now());
   }
 
@@ -109,11 +111,15 @@ export class Link {
     }
   }
 
+  private wake = () => {
+    if (document.visibilityState === 'visible') this.resume?.(true);
+  };
+
   private schedule(joining: boolean, lastSuccess: number, immediate = false) {
-    const resume = () => {
+    const resume = (waking = false) => {
       window.clearTimeout(this.timer);
       this.resume = undefined;
-      void this.sync(joining, lastSuccess);
+      void this.sync(joining, waking ? Date.now() : lastSuccess);
     };
     this.resume = this.authorized ? resume : undefined;
     this.timer = window.setTimeout(resume, immediate ? 0 : this.authorized ? 850 : 650);
@@ -122,6 +128,8 @@ export class Link {
   close() {
     if (this.controller.signal.aborted) return;
     this.controller.abort();
+    document.removeEventListener('visibilitychange', this.wake);
+    window.removeEventListener('online', this.wake);
     window.clearTimeout(this.timer);
     this.resume = undefined;
     this.authorized = false;
